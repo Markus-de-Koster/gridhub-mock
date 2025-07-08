@@ -3,7 +3,8 @@ import random
 import math
 from pathlib import Path
 from datetime import datetime, timedelta
-
+from fastapi import Body
+from shutil import rmtree
 import uvicorn
 from fastapi import FastAPI, APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -16,6 +17,10 @@ class CustomJSONResponse(JSONResponse):
     def render(self, content: any) -> bytes:
         return json.dumps(content, allow_nan=True).encode("utf-8")
 
+def _write_json(path: Path, data: any):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        json.dump(data, f, indent=2)
 app = FastAPI()
 router = APIRouter()
 
@@ -75,6 +80,96 @@ async def get_grid_topology_detail(grid_id: int, topology_id: str):
         raise HTTPException(status_code=404, detail="Topology detail file not found")
     with file_path.open() as f:
         return json.load(f)
+
+@router.post("/grids/", response_class=CustomJSONResponse)
+async def upsert_grid(grid: dict = Body(...)):
+    """
+    grid: { id: int, name: str, structure: any }
+    """
+    grids_path = DATA_DIR / "grids.json"
+    grids = load_grids()
+    # replace or append
+    existing = next((g for g in grids if g["id"] == grid["id"]), None)
+    if existing:
+        existing.update({k: grid[k] for k in ("name","structure")})
+    else:
+        grids.append({"id": grid["id"], "name": grid["name"], "structure": grid["structure"]})
+    _write_json(grids_path, grids)
+    return {"status": "ok", "grids": grids}
+
+@router.delete("/grids/{grid_id}/", response_class=CustomJSONResponse)
+async def delete_grid(grid_id: int):
+    """
+    Deletes grid directory and removes entry from grids.json
+    """
+    # remove directory
+    grid_dir = DATA_DIR / str(grid_id)
+    if grid_dir.exists():
+        rmtree(grid_dir)
+    # update grids.json
+    grids_path = DATA_DIR / "grids.json"
+    grids = load_grids()
+    grids = [g for g in grids if g["id"] != grid_id]
+    _write_json(grids_path, grids)
+    return {"status": "deleted", "grid_id": grid_id}
+
+@router.post("/grids/{grid_id}/{topology_id}/", response_class=CustomJSONResponse)
+async def upsert_topology(
+    grid_id: int,
+    topology_id: int,
+    topo: dict = Body(...)
+):
+    """
+    topo: full topology JSON (same shape as get_grid_topology_detail)
+    """
+    # write detail file
+    detail_path = DATA_DIR / str(grid_id) / f"topology_{topology_id}_detail.json"
+    _write_json(detail_path, topo)
+
+    # update preview list
+    preview_path = DATA_DIR / str(grid_id) / "topologies_preview_True.json"
+    previews = []
+    if preview_path.exists():
+        previews = json.loads(preview_path.read_text())
+    # regenerate this entry’s preview
+    def _get_preview_data(t):
+        return {
+            "nodes": [{"id": n["idx"], "x": n["x"], "y": n["y"]} for n in t["nodes"]],
+            "edges": [
+                {"id": e["idx"], "type": e["__class__"], "bus1": e["node_id1"], "bus2": e["node_id2"]}
+                for e in t["edges"]
+            ],
+        }
+    new_preview = _get_preview_data(topo)
+    # find or append
+    for entry in previews:
+        if entry["topology_id"] == topology_id:
+            entry["preview"] = new_preview
+            break
+    else:
+        previews.append({"topology_id": topology_id,
+                         "n_nodes": len(topo["nodes"]),
+                         "preview": new_preview})
+    _write_json(preview_path, previews)
+
+    return {"status": "ok", "topologies": previews}
+
+@router.delete("/grids/{grid_id}/{topology_id}/", response_class=CustomJSONResponse)
+async def delete_topology(grid_id: int, topology_id: int):
+    """
+    Deletes both detail json and removes from preview file
+    """
+    # delete detail
+    detail_path = DATA_DIR / str(grid_id) / f"topology_{topology_id}_detail.json"
+    if detail_path.exists():
+        detail_path.unlink()
+    # update preview file
+    preview_path = DATA_DIR / str(grid_id) / "topologies_preview_True.json"
+    if preview_path.exists():
+        previews = [e for e in json.loads(preview_path.read_text())
+                    if e["topology_id"] != topology_id]
+        _write_json(preview_path, previews)
+    return {"status": "deleted", "topology_id": topology_id}
 
 # ==== Helpers ==== #
 
