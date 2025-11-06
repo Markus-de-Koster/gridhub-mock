@@ -348,14 +348,57 @@ def sample_injection_power(grid_id: int, topology_id: str, node_id: int):
     return {"node_id": node_id, "injection_power": round(val, 1)}
 
 def sample_sequence(fn, start, end, interval, **kw):
-    t = start
+    """
+
+    :param fn:
+    :param start: time step (int) or datetime string
+    :param end: time step (int) or datetime string
+    :param interval: interval in steps or seconds
+    :param kw:
+    :return:
+    """
     seq = []
-    while t <= end:
-        entry = fn(**kw)
-        entry["timestamp"] = t.isoformat()
-        seq.append(entry)
-        t += timedelta(seconds=interval)
+    # Step-based simulation (integer range)
+    if isinstance(start, int) and isinstance(end, int):
+        t = start
+        while t <= end:
+            entry = fn(**kw)
+            entry["step"] = t
+            seq.append(entry)
+            t += interval
+    # Time-based simulation (datetime range)
+    elif isinstance(start, datetime) and isinstance(end, datetime):
+        t = start
+        while t <= end:
+            entry = fn(**kw)
+            entry["timestamp"] = t.isoformat()
+            seq.append(entry)
+            t += timedelta(seconds=interval)
+    else:
+        raise ValueError("start and end must both be int or both be datetime")
     return seq
+
+def _parse_start_end(start, end):
+    """
+    Interpret start/end either as integer steps or ISO datetimes.
+
+    Returns:
+        (start_parsed, end_parsed) where both are either int or datetime,
+        or (None, None) if either start or end is missing.
+    """
+    if start is None or end is None:
+        return None, None
+
+    # Try integer interpretation first (step-based)
+    try:
+        s_int = int(start)
+        e_int = int(end)
+        return s_int, e_int
+    except (TypeError, ValueError):
+        pass
+
+    # Fallback: interpret as ISO 8601 datetimes (time-based)
+    return datetime.fromisoformat(start), datetime.fromisoformat(end)
 
 # ==== Endpoints ==== #
 
@@ -364,19 +407,26 @@ def sample_sequence(fn, start, end, interval, **kw):
 async def get_voltage(grid_id: int, topology_id: str, node_id: int,
                       start: str = None, end: str = None, interval: int = 60):
     verify_bus(grid_id, topology_id, node_id)
-    if start and end:
-        return sample_sequence(sample_voltage, datetime.fromisoformat(start), datetime.fromisoformat(end), interval,
-                               grid_id=grid_id, topology_id=topology_id, node_id=node_id)
+    parsed_start, parsed_end = _parse_start_end(start, end)
+    if parsed_start is not None and parsed_end is not None:
+        return sample_sequence(
+            sample_voltage, parsed_start, parsed_end, interval,
+            grid_id=grid_id, topology_id=topology_id, node_id=node_id
+        )
     return sample_voltage(grid_id, topology_id, node_id)
+
 
 @router.get("/measurements/{grid_id}/{topology_id}/voltage/bus/{node_id}/harmonics", response_class=CustomJSONResponse)
 async def get_voltage_harmonics(grid_id: int, topology_id: str, node_id: int,
                                 orders: str = "1,3,5,7", start: str = None, end: str = None, interval: int = 60):
     verify_bus(grid_id, topology_id, node_id)
     ords = [int(o) for o in orders.split(",")]
-    if start and end:
-        return sample_sequence(sample_voltage_harmonics, datetime.fromisoformat(start), datetime.fromisoformat(end), interval,
-                               grid_id=grid_id, topology_id=topology_id, node_id=node_id, orders=ords)
+    parsed_start, parsed_end = _parse_start_end(start, end)
+    if parsed_start is not None and parsed_end is not None:
+        return sample_sequence(
+            sample_voltage_harmonics, parsed_start, parsed_end, interval,
+            grid_id=grid_id, topology_id=topology_id, node_id=node_id, orders=ords
+        )
     return sample_voltage_harmonics(grid_id, topology_id, node_id, ords)
 
 @router.get("/measurements/{grid_id}/{topology_id}/voltage/bus/{node_id}/thd", response_class=CustomJSONResponse)
@@ -395,21 +445,29 @@ async def get_all_bus_voltages(grid_id: int, topology_id: str):
 
 # Current
 @router.get("/measurements/{grid_id}/{topology_id}/current/line/{line_id}", response_class=CustomJSONResponse)
-async def get_line_current(grid_id: int, topology_id: str, line_id: int, start: str = None, end: str = None, interval: int = 60):
+async def get_line_current(grid_id: int, topology_id: str, line_id: int,
+                           start: str = None, end: str = None, interval: int = 60):
     verify_line(grid_id, topology_id, line_id)
-    if start and end:
-        return sample_sequence(sample_current, datetime.fromisoformat(start), datetime.fromisoformat(end), interval,
-                               grid_id=grid_id, topology_id=topology_id, line_id=line_id)
+    parsed_start, parsed_end = _parse_start_end(start, end)
+    if parsed_start is not None and parsed_end is not None:
+        return sample_sequence(
+            sample_current, parsed_start, parsed_end, interval,
+            grid_id=grid_id, topology_id=topology_id, line_id=line_id
+        )
     return sample_current(grid_id, topology_id, line_id)
+
 
 @router.get("/measurements/{grid_id}/{topology_id}/current/line/{line_id}/harmonics", response_class=CustomJSONResponse)
 async def get_current_harmonics(grid_id: int, topology_id: str, line_id: int,
                                 orders: str = "1,3,5", start: str = None, end: str = None, interval: int = 60):
     verify_line(grid_id, topology_id, line_id)
     ords = [int(o) for o in orders.split(",")]
-    if start and end:
-        return sample_sequence(sample_current_harmonics, datetime.fromisoformat(start), datetime.fromisoformat(end), interval,
-                               grid_id=grid_id, topology_id=topology_id, line_id=line_id, orders=ords)
+    parsed_start, parsed_end = _parse_start_end(start, end)
+    if parsed_start is not None and parsed_end is not None:
+        return sample_sequence(
+            sample_current_harmonics, parsed_start, parsed_end, interval,
+            grid_id=grid_id, topology_id=topology_id, line_id=line_id, orders=ords
+        )
     return sample_current_harmonics(grid_id, topology_id, line_id, ords)
 
 @router.get("/measurements/{grid_id}/{topology_id}/current/line/{line_id}/thd", response_class=CustomJSONResponse)
@@ -428,21 +486,29 @@ async def get_all_line_currents(grid_id: int, topology_id: str):
 
 # Power
 @router.get("/measurements/{grid_id}/{topology_id}/power/line/{line_id}", response_class=CustomJSONResponse)
-async def get_line_power(grid_id: int, topology_id: str, line_id: int, start: str = None, end: str = None, interval: int = 60):
+async def get_line_power(grid_id: int, topology_id: str, line_id: int,
+                         start: str = None, end: str = None, interval: int = 60):
     verify_line(grid_id, topology_id, line_id)
-    if start and end:
-        return sample_sequence(sample_power, datetime.fromisoformat(start), datetime.fromisoformat(end), interval,
-                               grid_id=grid_id, topology_id=topology_id, line_id=line_id)
+    parsed_start, parsed_end = _parse_start_end(start, end)
+    if parsed_start is not None and parsed_end is not None:
+        return sample_sequence(
+            sample_power, parsed_start, parsed_end, interval,
+            grid_id=grid_id, topology_id=topology_id, line_id=line_id
+        )
     return sample_power(grid_id, topology_id, line_id)
+
 
 @router.get("/measurements/{grid_id}/{topology_id}/power/line/{line_id}/harmonics", response_class=CustomJSONResponse)
 async def get_power_harmonics(grid_id: int, topology_id: str, line_id: int, orders: str = "1,3,5",
                               start: str = None, end: str = None, interval: int = 60):
     verify_line(grid_id, topology_id, line_id)
     ords = [int(o) for o in orders.split(",")]
-    if start and end:
-        return sample_sequence(sample_power_harmonics, datetime.fromisoformat(start), datetime.fromisoformat(end), interval,
-                               grid_id=grid_id, topology_id=topology_id, line_id=line_id, orders=ords)
+    parsed_start, parsed_end = _parse_start_end(start, end)
+    if parsed_start is not None and parsed_end is not None:
+        return sample_sequence(
+            sample_power_harmonics, parsed_start, parsed_end, interval,
+            grid_id=grid_id, topology_id=topology_id, line_id=line_id, orders=ords
+        )
     return sample_power_harmonics(grid_id, topology_id, line_id, ords)
 
 @router.get("/measurements/{grid_id}/{topology_id}/power/line/{line_id}/thd", response_class=CustomJSONResponse)
