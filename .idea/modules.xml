@@ -2,6 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/../GridVisu/.idea/GridVisu.iml" filepath="$PROJECT_DIR$/../GridVisu/.idea/GridVisu.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/gridhub-mock.iml" filepath="$PROJECT_DIR$/.idea/gridhub-mock.iml" />
     </modules>
   </component>
